@@ -162,22 +162,19 @@
       const a = ac(), t = a.currentTime;
       if (t - lastTickT < 0.06) return;
       lastTickT = t;
-      // FM orbital scan — proximity to nucleus raises pitch
+      // Two detuned sines — soft orbital hum, proximity raises pitch
       const distFromCenter = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
       const tFrac = Math.max(0, 1 - distFromCenter / 185);
-      const freq = 110 + tFrac * 290;
-      const mod = a.createOscillator(), modG = a.createGain();
-      const osc = a.createOscillator(), outG = a.createGain();
-      mod.frequency.value = freq * 1.618;
-      modG.gain.value = freq * 0.42;
-      mod.connect(modG); modG.connect(osc.frequency);
-      osc.type = 'sine'; osc.frequency.value = freq;
-      osc.connect(outG); outG.connect(a.destination);
-      outG.gain.setValueAtTime(0.001, t);
-      outG.gain.linearRampToValueAtTime(0.026, t + 0.025);
-      outG.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
-      mod.start(t); osc.start(t);
-      mod.stop(t + 0.35); osc.stop(t + 0.35);
+      const freq = 150 + tFrac * 250;
+      [freq, freq * 1.003].forEach(f => {
+        const o = a.createOscillator(), g = a.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        o.connect(g); g.connect(a.destination);
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(0.015, t + 0.038);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
+        o.start(t); o.stop(t + 0.43);
+      });
     } catch (_) {}
   }
 
@@ -185,56 +182,50 @@
     try {
       const a = ac(), t = a.currentTime;
 
-      // Convolution reverb — space and depth
       const conv = a.createConvolver();
       conv.buffer = getRevBuf(a);
-      const convG = a.createGain(); convG.gain.value = 0.26;
+      const convG = a.createGain(); convG.gain.value = 0.28;
       conv.connect(convG); convG.connect(a.destination);
 
-      // Sub gravity pulse — the weight of orbital collapse
+      // Impact punch — audible mid-bass drop
       const sub = a.createOscillator(), subG = a.createGain();
       sub.type = 'sine';
-      sub.frequency.setValueAtTime(44, t);
-      sub.frequency.exponentialRampToValueAtTime(16, t + 0.52);
+      sub.frequency.setValueAtTime(110, t);
+      sub.frequency.exponentialRampToValueAtTime(32, t + 0.46);
       sub.connect(subG); subG.connect(a.destination);
       subG.gain.setValueAtTime(0.001, t);
-      subG.gain.linearRampToValueAtTime(0.34, t + 0.008);
-      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-      sub.start(t); sub.stop(t + 0.56);
+      subG.gain.linearRampToValueAtTime(0.30, t + 0.007);
+      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.48);
+      sub.start(t); sub.stop(t + 0.49);
 
-      // FM field voices — harmonic activation through reverb
-      [55, 82, 110, 164].forEach((freq, i) => {
+      // Harmonic sines — clean, through reverb
+      [110, 165, 220].forEach((freq, i) => {
         const d = i * 0.03;
-        const mod = a.createOscillator(), modG = a.createGain();
-        const carrier = a.createOscillator(), outG = a.createGain();
-        mod.frequency.value = freq * 2.414;
-        modG.gain.value = freq * (1.1 - i * 0.18);
-        mod.connect(modG); modG.connect(carrier.frequency);
-        carrier.type = 'sine'; carrier.frequency.value = freq;
-        carrier.connect(outG);
-        outG.connect(conv);
-        outG.connect(a.destination);
-        const pk = 0.052 - i * 0.009;
-        outG.gain.setValueAtTime(0.001, t + d);
-        outG.gain.linearRampToValueAtTime(pk, t + d + 0.022);
-        outG.gain.exponentialRampToValueAtTime(0.001, t + d + 0.88);
-        mod.start(t + d); carrier.start(t + d);
-        mod.stop(t + d + 0.89); carrier.stop(t + d + 0.89);
+        const o = a.createOscillator(), g = a.createGain();
+        o.type = 'sine'; o.frequency.value = freq;
+        o.connect(g);
+        g.connect(conv);
+        g.connect(a.destination);
+        const pk = 0.044 - i * 0.011;
+        g.gain.setValueAtTime(0.001, t + d);
+        g.gain.linearRampToValueAtTime(pk, t + d + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.82);
+        o.start(t + d); o.stop(t + d + 0.83);
       });
 
-      // Particle scatter — resonant bandpass noise sweep
-      const nLen = Math.floor(a.sampleRate * 0.14);
+      // Scatter — bandpass noise sweep
+      const nLen = Math.floor(a.sampleRate * 0.12);
       const nBuf = a.createBuffer(1, nLen, a.sampleRate);
       const nd = nBuf.getChannelData(0);
       for (let i = 0; i < nLen; i++)
-        nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (nLen * 0.22));
+        nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (nLen * 0.2));
       const nSrc = a.createBufferSource(); nSrc.buffer = nBuf;
-      const nFlt = a.createBiquadFilter(); nFlt.type = 'bandpass';
-      nFlt.frequency.setValueAtTime(600, t);
-      nFlt.frequency.exponentialRampToValueAtTime(3800, t + 0.12);
-      nFlt.Q.value = 1.8;
-      const nG = a.createGain(); nG.gain.value = 0.2;
-      nSrc.connect(nFlt); nFlt.connect(nG); nG.connect(a.destination);
+      const bpf = a.createBiquadFilter(); bpf.type = 'bandpass';
+      bpf.frequency.setValueAtTime(500, t);
+      bpf.frequency.exponentialRampToValueAtTime(3200, t + 0.1);
+      bpf.Q.value = 1.5;
+      const nG = a.createGain(); nG.gain.value = 0.17;
+      nSrc.connect(bpf); bpf.connect(nG); nG.connect(a.destination);
       nSrc.start(t);
     } catch (_) {}
   }
