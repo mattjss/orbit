@@ -31,49 +31,73 @@
     </div>
   </div>
 <script>
-  const SZ = 422;
+  const SZ      = 422;
+  const G       = 3200000; // fast orbits: ~1.2s inner, ~6s outer
+  const TRAIL   = 54;
+  const MIN_R   = 8;
+  const CURSOR_R = 22; // physical deflection radius
+
+  // Three distinct rings: [count, rMin, rMax, hue]
+  const RINGS = [
+    [85,  38,  62,  36],  // inner — amber/orange
+    [90,  80, 108, 172],  // middle — teal/cyan
+    [85, 125, 158, 268],  // outer — violet/indigo
+  ];
+
   const canvas = document.getElementById('c');
   canvas.width = canvas.height = SZ;
   const ctx = canvas.getContext('2d');
 
-  // ── Physics constants ─────────────────────────────────────────
-  const G         = 780000; // px³/s² — gives ~5s orbits at r=80px
-  const N         = 90;
-  const TRAIL_LEN = 20;
-  const MIN_R     = 15;     // singularity clamp
-  const CLICK_STR = 12000;  // radial impulse strength
-
   let mx = SZ/2, my = SZ/2, isInside = false;
+  let cvx = 0, cvy = 0; // cursor velocity (pixels per frame)
 
-  // ── Particles ─────────────────────────────────────────────────
+  // Spring-following gravity center
+  let gx = SZ/2, gy = SZ/2, gvx = 0, gvy = 0;
+
+  function gauss() {
+    let u, v;
+    do { u = Math.random(); } while (u === 0);
+    do { v = Math.random(); } while (v === 0);
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
   const particles = [];
 
-  function spawn(gx, gy) {
-    const r    = 35 + Math.random() * 150;
+  function spawnInRing(cx, cy, rMin, rMax, hue) {
+    const r    = rMin + Math.random() * (rMax - rMin);
     const ang  = Math.random() * Math.PI * 2;
-    const x    = gx + Math.cos(ang) * r;
-    const y    = gy + Math.sin(ang) * r;
-    const orbV = Math.sqrt(G / r) * (0.80 + Math.random() * 0.40);
-    const cw   = Math.random() < 0.22 ? -1 : 1;
+    const x    = cx + Math.cos(ang) * r;
+    const y    = cy + Math.sin(ang) * r;
+    const orbV = Math.sqrt(G / r) * (0.92 + Math.random() * 0.16);
+    const dir  = Math.random() < 0.06 ? -1 : 1;
     particles.push({
       x, y,
-      vx: -Math.sin(ang) * orbV * cw + (Math.random()-0.5) * 12,
-      vy:  Math.cos(ang) * orbV * cw + (Math.random()-0.5) * 12,
+      vx: -Math.sin(ang) * orbV * dir + gauss() * 1.8,
+      vy:  Math.cos(ang) * orbV * dir + gauss() * 1.8,
       trail: [],
+      hue,
+      rMin, rMax, // for respawn
     });
   }
 
-  for (let i = 0; i < N; i++) spawn(SZ/2, SZ/2);
+  RINGS.forEach(([count, rMin, rMax, hue]) => {
+    for (let i = 0; i < count; i++) spawnInRing(SZ/2, SZ/2, rMin, rMax, hue);
+  });
 
-  // ── Events ───────────────────────────────────────────────────
+  const waves = [];
+  let flashAlpha = 0;
+
+  // ── Events ──────────────────────────────────────────────────────
   canvas.addEventListener('mousemove', e => {
-    const r = canvas.getBoundingClientRect();
-    mx = (e.clientX - r.left) * (SZ / r.width);
-    my = (e.clientY - r.top)  * (SZ / r.height);
+    const r  = canvas.getBoundingClientRect();
+    const nx = (e.clientX - r.left) * (SZ / r.width);
+    const ny = (e.clientY - r.top)  * (SZ / r.height);
+    cvx = nx - mx; cvy = ny - my;
+    mx = nx; my = ny;
     isInside = true;
   });
   canvas.addEventListener('mouseenter', () => isInside = true);
-  canvas.addEventListener('mouseleave', () => isInside = false);
+  canvas.addEventListener('mouseleave', () => { isInside = false; cvx = 0; cvy = 0; });
 
   canvas.addEventListener('pointerdown', e => {
     const r  = canvas.getBoundingClientRect();
@@ -82,10 +106,11 @@
     particles.forEach(p => {
       const dx = p.x - ex, dy = p.y - ey;
       const d  = Math.sqrt(dx*dx + dy*dy) + 1;
-      const imp = CLICK_STR / d;
-      p.vx += (dx/d) * imp;
-      p.vy += (dy/d) * imp;
+      p.vx += (dx/d) * (34000 / d);
+      p.vy += (dy/d) * (34000 / d);
     });
+    waves.push({ x: ex, y: ey, r: 0, born: 0 });
+    flashAlpha = 0.22;
     playClick();
   });
 
@@ -99,80 +124,152 @@
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
     const t = e.touches[0], r = canvas.getBoundingClientRect();
-    mx = (t.clientX - r.left) * (SZ / r.width);
-    my = (t.clientY - r.top)  * (SZ / r.height);
+    const nx = (t.clientX - r.left) * (SZ / r.width);
+    const ny = (t.clientY - r.top)  * (SZ / r.height);
+    cvx = nx - mx; cvy = ny - my;
+    mx = nx; my = ny;
   }, { passive: false });
-  canvas.addEventListener('touchend', () => isInside = false);
+  canvas.addEventListener('touchend', () => { isInside = false; cvx = 0; cvy = 0; });
 
-  // ── Update ───────────────────────────────────────────────────
+  // ── Update ──────────────────────────────────────────────────────
   function update(dt) {
-    const gx = isInside ? mx : SZ/2;
-    const gy = isInside ? my : SZ/2;
+    const tx = isInside ? mx : SZ/2;
+    const ty = isInside ? my : SZ/2;
+    gvx += (tx - gx) * 0.08;
+    gvy += (ty - gy) * 0.08;
+    gvx *= 0.76; gvy *= 0.76;
+    gx  += gvx * dt * 60;
+    gy  += gvy * dt * 60;
+
+    const cspd = Math.sqrt(cvx*cvx + cvy*cvy);
 
     for (let i = particles.length - 1; i >= 0; i--) {
-      const p  = particles[i];
+      const p = particles[i];
+
+      // Gravity toward center
       const dx = gx - p.x, dy = gy - p.y;
       const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_R);
-      const acc = G / (d * d);
+      p.vx += (dx/d) * (G / (d * d)) * dt;
+      p.vy += (dy/d) * (G / (d * d)) * dt;
 
-      p.vx += (dx/d) * acc * dt;
-      p.vy += (dy/d) * acc * dt;
-      p.x  += p.vx * dt;
-      p.y  += p.vy * dt;
+      if (isInside) {
+        const pdx = p.x - mx, pdy = p.y - my;
+        const pd  = Math.sqrt(pdx*pdx + pdy*pdy);
+
+        // Physical deflection: cursor has mass
+        if (pd < CURSOR_R && pd > 0) {
+          const push = (CURSOR_R - pd) / CURSOR_R;
+          p.vx += (pdx/pd) * push * 1400 * dt;
+          p.vy += (pdy/pd) * push * 1400 * dt;
+        }
+
+        // Velocity wake: fast swipes sling nearby particles
+        if (cspd > 1.5 && pd < 115) {
+          const wake = (1 - pd/115) * Math.min(cspd / 14, 1.8);
+          p.vx += cvx * wake * 1.3 * dt * 60;
+          p.vy += cvy * wake * 1.3 * dt * 60;
+        }
+      }
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
 
       p.trail.push({ x: p.x, y: p.y });
-      if (p.trail.length > TRAIL_LEN) p.trail.shift();
+      if (p.trail.length > TRAIL) p.trail.shift();
 
       if (p.x < -SZ || p.x > SZ*2 || p.y < -SZ || p.y > SZ*2) {
+        const { rMin, rMax, hue } = p;
         particles.splice(i, 1);
-        spawn(gx, gy);
+        spawnInRing(gx, gy, rMin, rMax, hue);
       }
     }
+
+    for (let i = waves.length - 1; i >= 0; i--) {
+      waves[i].born += dt;
+      waves[i].r    += 295 * dt;
+      if (waves[i].r > SZ * 1.5) waves.splice(i, 1);
+    }
+
+    flashAlpha *= 0.83;
+    cvx *= 0.76; cvy *= 0.76;
   }
 
-  // ── Draw ─────────────────────────────────────────────────────
+  // ── Draw ────────────────────────────────────────────────────────
   function draw() {
+    ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, SZ, SZ);
 
-    const gx = isInside ? mx : SZ/2;
-    const gy = isInside ? my : SZ/2;
+    // Click flash
+    if (flashAlpha > 0.004) {
+      ctx.fillStyle = `rgba(255,245,225,${flashAlpha.toFixed(3)})`;
+      ctx.fillRect(0, 0, SZ, SZ);
+    }
 
-    // Gravity well glow
-    const grd = ctx.createRadialGradient(gx, gy, 0, gx, gy, 44);
-    grd.addColorStop(0,    'rgba(255,255,255,0.13)');
-    grd.addColorStop(0.45, 'rgba(255,255,255,0.04)');
-    grd.addColorStop(1,    'rgba(255,255,255,0)');
+    // Additive blending from here — colors stack into glow
+    ctx.globalCompositeOperation = 'screen';
+
+    // Core glow
+    const grd = ctx.createRadialGradient(gx, gy, 0, gx, gy, 58);
+    grd.addColorStop(0,    'rgba(255,230,180,0.32)');
+    grd.addColorStop(0.38, 'rgba(255,160,70,0.10)');
+    grd.addColorStop(1,    'rgba(0,0,0,0)');
     ctx.beginPath();
-    ctx.arc(gx, gy, 44, 0, Math.PI*2);
+    ctx.arc(gx, gy, 58, 0, Math.PI*2);
     ctx.fillStyle = grd;
     ctx.fill();
 
+    // Shockwave ring
+    waves.forEach(w => {
+      const a = Math.max(0, 0.62 * (1 - w.born * 1.15));
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, w.r, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,210,140,${a.toFixed(3)})`;
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+    });
+
     // Particles + trails
     particles.forEach(p => {
+      const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+      const hot   = Math.min(speed / 320, 1);
+      const { hue } = p;
+
       const len = p.trail.length;
       for (let j = 0; j < len; j++) {
-        const frac = j / len;
+        const frac = (j + 1) / len;
         const pt   = p.trail[j];
+        const a    = frac * frac * frac * 0.58;
+        const l    = 14 + frac * (32 + hot * 38);
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 0.5 + frac * 0.9, 0, Math.PI*2);
-        ctx.fillStyle = `rgba(255,255,255,${(frac * frac * 0.40).toFixed(3)})`;
+        ctx.arc(pt.x, pt.y, 0.45 + frac * 1.15, 0, Math.PI*2);
+        ctx.fillStyle = `hsla(${hue},85%,${l.toFixed(0)}%,${a.toFixed(3)})`;
         ctx.fill();
       }
+
+      const hl = 52 + hot * 43;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 1.8, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(255,255,255,0.88)';
+      ctx.arc(p.x, p.y, 1.4 + hot * 0.95, 0, Math.PI*2);
+      ctx.fillStyle = `hsl(${hue},88%,${hl.toFixed(0)}%)`;
       ctx.fill();
     });
 
-    // Gravity source dot
+    // Star dot
     ctx.beginPath();
-    ctx.arc(gx, gy, 2.5, 0, Math.PI*2);
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.arc(gx, gy, 3.2, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,242,215,0.92)';
     ctx.fill();
+
+    // Cursor dot
+    if (isInside && Math.hypot(mx - gx, my - gy) > 8) {
+      ctx.beginPath();
+      ctx.arc(mx, my, 1.8, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.42)';
+      ctx.fill();
+    }
   }
 
-  // ── Audio ────────────────────────────────────────────────────
+  // ── Audio ────────────────────────────────────────────────────────
   let clickAudio = null;
   function initAudio() {
     if (clickAudio) return;
@@ -185,7 +282,7 @@
     clickAudio.play().catch(() => {});
   }
 
-  // ── Loop ─────────────────────────────────────────────────────
+  // ── Loop ─────────────────────────────────────────────────────────
   let lastT = performance.now();
   function loop(now) {
     const dt = Math.min((now - lastT) / 1000, 0.05);
