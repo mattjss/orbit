@@ -95,6 +95,16 @@
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, SZ, SZ);
 
+    // Nucleus glow
+    const nucGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 32);
+    nucGrad.addColorStop(0,   'rgba(255,255,255,0.14)');
+    nucGrad.addColorStop(0.4, 'rgba(255,255,255,0.05)');
+    nucGrad.addColorStop(1,   'rgba(255,255,255,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 32, 0, Math.PI * 2);
+    ctx.fillStyle = nucGrad;
+    ctx.fill();
+
     RINGS.forEach(ring => {
       ctx.beginPath();
       ctx.arc(cx, cy, ring.r, 0, Math.PI * 2);
@@ -107,6 +117,19 @@
       const ring = RINGS[p.ri];
       const px = cx + Math.cos(p.angle) * p.r;
       const py = cy + Math.sin(p.angle) * p.r;
+
+      // Comet trail
+      if (!p.trail) p.trail = [];
+      p.trail.push({ x: px, y: py });
+      if (p.trail.length > 8) p.trail.shift();
+      p.trail.forEach((pt, j) => {
+        const t = j / p.trail.length;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 0.5 + t * 0.8, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${(t * 0.28 * ring.alpha).toFixed(3)})`;
+        ctx.fill();
+      });
+
       const disp = Math.abs(p.r - ring.r);
       const alpha = ring.alpha + Math.min(disp / 20, 1) * 0.3;
       const radius = 1.5 + Math.min(disp / 30, 1) * 1.0;
@@ -118,7 +141,7 @@
 
     ctx.beginPath();
     ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.fill();
 
     if (isInside) {
@@ -126,7 +149,7 @@
       if (Math.sqrt(dx * dx + dy * dy) > 8) {
         ctx.beginPath();
         ctx.arc(mx, my, 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
         ctx.fill();
       }
     }
