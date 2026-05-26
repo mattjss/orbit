@@ -140,6 +140,19 @@
     return AC;
   }
 
+  let _revBuf = null;
+  function getRevBuf(a) {
+    if (_revBuf) return _revBuf;
+    const len = Math.floor(a.sampleRate * 1.8);
+    _revBuf = a.createBuffer(2, len, a.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = _revBuf.getChannelData(ch);
+      for (let i = 0; i < len; i++)
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+    }
+    return _revBuf;
+  }
+
   let lastTick = { x: 0, y: 0 }, lastTickT = 0;
   function maybeTick(x, y) {
     const dx = x - lastTick.x, dy = y - lastTick.y;
@@ -149,40 +162,80 @@
       const a = ac(), t = a.currentTime;
       if (t - lastTickT < 0.06) return;
       lastTickT = t;
-      // Distance from orbital center — closer = higher, like tightening orbit
+      // FM orbital scan — proximity to nucleus raises pitch
       const distFromCenter = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
       const tFrac = Math.max(0, 1 - distFromCenter / 185);
-      const root = 110 + tFrac * 330; // 110Hz at edge → 440Hz at center
-      [root, root * 1.498].forEach((freq, i) => {
-        const o = a.createOscillator(), g = a.createGain();
-        o.connect(g); g.connect(a.destination);
-        o.type = 'sine'; o.frequency.value = freq;
-        g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(0.022 - i * 0.007, t + 0.014);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
-        o.start(t); o.stop(t + 0.27);
-      });
+      const freq = 110 + tFrac * 290;
+      const mod = a.createOscillator(), modG = a.createGain();
+      const osc = a.createOscillator(), outG = a.createGain();
+      mod.frequency.value = freq * 1.618;
+      modG.gain.value = freq * 0.42;
+      mod.connect(modG); modG.connect(osc.frequency);
+      osc.type = 'sine'; osc.frequency.value = freq;
+      osc.connect(outG); outG.connect(a.destination);
+      outG.gain.setValueAtTime(0.001, t);
+      outG.gain.linearRampToValueAtTime(0.026, t + 0.025);
+      outG.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
+      mod.start(t); osc.start(t);
+      mod.stop(t + 0.35); osc.stop(t + 0.35);
     } catch (_) {}
   }
 
   function playClick() {
     try {
       const a = ac(), t = a.currentTime;
-      // Bell cascade — PeriodicWave for mallet/bell timbre, ascending C2→G4
-      const bellReal = new Float32Array(9), bellImag = new Float32Array(9);
-      bellImag[1] = 1.0; bellImag[2] = 0.55; bellImag[3] = 0.22;
-      bellImag[4] = 0.08; bellImag[6] = 0.04;
-      const bellWave = a.createPeriodicWave(bellReal, bellImag, { disableNormalization: false });
-      [65, 98, 131, 165, 196, 261, 329, 392].forEach((freq, i) => {
-        const d = i * 0.062;
-        const o = a.createOscillator(), g = a.createGain();
-        o.connect(g); g.connect(a.destination);
-        o.setPeriodicWave(bellWave); o.frequency.value = freq;
-        g.gain.setValueAtTime(0.001, t + d);
-        g.gain.linearRampToValueAtTime(0.065 - i * 0.006, t + d + 0.014);
-        g.gain.exponentialRampToValueAtTime(0.001, t + d + 1.4);
-        o.start(t + d); o.stop(t + d + 1.42);
+
+      // Convolution reverb — space and depth
+      const conv = a.createConvolver();
+      conv.buffer = getRevBuf(a);
+      const convG = a.createGain(); convG.gain.value = 0.26;
+      conv.connect(convG); convG.connect(a.destination);
+
+      // Sub gravity pulse — the weight of orbital collapse
+      const sub = a.createOscillator(), subG = a.createGain();
+      sub.type = 'sine';
+      sub.frequency.setValueAtTime(44, t);
+      sub.frequency.exponentialRampToValueAtTime(16, t + 0.52);
+      sub.connect(subG); subG.connect(a.destination);
+      subG.gain.setValueAtTime(0.001, t);
+      subG.gain.linearRampToValueAtTime(0.34, t + 0.008);
+      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      sub.start(t); sub.stop(t + 0.56);
+
+      // FM field voices — harmonic activation through reverb
+      [55, 82, 110, 164].forEach((freq, i) => {
+        const d = i * 0.03;
+        const mod = a.createOscillator(), modG = a.createGain();
+        const carrier = a.createOscillator(), outG = a.createGain();
+        mod.frequency.value = freq * 2.414;
+        modG.gain.value = freq * (1.1 - i * 0.18);
+        mod.connect(modG); modG.connect(carrier.frequency);
+        carrier.type = 'sine'; carrier.frequency.value = freq;
+        carrier.connect(outG);
+        outG.connect(conv);
+        outG.connect(a.destination);
+        const pk = 0.052 - i * 0.009;
+        outG.gain.setValueAtTime(0.001, t + d);
+        outG.gain.linearRampToValueAtTime(pk, t + d + 0.022);
+        outG.gain.exponentialRampToValueAtTime(0.001, t + d + 0.88);
+        mod.start(t + d); carrier.start(t + d);
+        mod.stop(t + d + 0.89); carrier.stop(t + d + 0.89);
       });
+
+      // Particle scatter — resonant bandpass noise sweep
+      const nLen = Math.floor(a.sampleRate * 0.14);
+      const nBuf = a.createBuffer(1, nLen, a.sampleRate);
+      const nd = nBuf.getChannelData(0);
+      for (let i = 0; i < nLen; i++)
+        nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (nLen * 0.22));
+      const nSrc = a.createBufferSource(); nSrc.buffer = nBuf;
+      const nFlt = a.createBiquadFilter(); nFlt.type = 'bandpass';
+      nFlt.frequency.setValueAtTime(600, t);
+      nFlt.frequency.exponentialRampToValueAtTime(3800, t + 0.12);
+      nFlt.Q.value = 1.8;
+      const nG = a.createGain(); nG.gain.value = 0.2;
+      nSrc.connect(nFlt); nFlt.connect(nG); nG.connect(a.destination);
+      nSrc.start(t);
     } catch (_) {}
   }
 
