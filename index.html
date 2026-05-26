@@ -149,17 +149,18 @@
       const a = ac(), t = a.currentTime;
       if (t - lastTickT < 0.06) return;
       lastTickT = t;
-      // Cinematic swell — perfect fifth interval, soft attack
-      const yFrac = my / SZ;
-      const root = 110 * Math.pow(4, yFrac * 0.8); // 110–282Hz range
-      [root, root * 1.5].forEach((freq, i) => {
+      // Distance from orbital center — closer = higher, like tightening orbit
+      const distFromCenter = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
+      const tFrac = Math.max(0, 1 - distFromCenter / 185);
+      const root = 110 + tFrac * 330; // 110Hz at edge → 440Hz at center
+      [root, root * 1.498].forEach((freq, i) => {
         const o = a.createOscillator(), g = a.createGain();
         o.connect(g); g.connect(a.destination);
         o.type = 'sine'; o.frequency.value = freq;
         g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(0.024 - i * 0.007, t + 0.018);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-        o.start(t); o.stop(t + 0.23);
+        g.gain.linearRampToValueAtTime(0.022 - i * 0.007, t + 0.014);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+        o.start(t); o.stop(t + 0.27);
       });
     } catch (_) {}
   }
@@ -167,16 +168,20 @@
   function playClick() {
     try {
       const a = ac(), t = a.currentTime;
-      // Cinematic chord hit — staggered low sine tones, long sustain
-      [65, 98, 131, 196, 261].forEach((freq, i) => {
-        const d = i * 0.075;
+      // Bell cascade — PeriodicWave for mallet/bell timbre, ascending C2→G4
+      const bellReal = new Float32Array(9), bellImag = new Float32Array(9);
+      bellImag[1] = 1.0; bellImag[2] = 0.55; bellImag[3] = 0.22;
+      bellImag[4] = 0.08; bellImag[6] = 0.04;
+      const bellWave = a.createPeriodicWave(bellReal, bellImag, { disableNormalization: false });
+      [65, 98, 131, 165, 196, 261, 329, 392].forEach((freq, i) => {
+        const d = i * 0.062;
         const o = a.createOscillator(), g = a.createGain();
         o.connect(g); g.connect(a.destination);
-        o.type = 'sine'; o.frequency.value = freq;
+        o.setPeriodicWave(bellWave); o.frequency.value = freq;
         g.gain.setValueAtTime(0.001, t + d);
-        g.gain.linearRampToValueAtTime(0.055 - i * 0.008, t + d + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.95);
-        o.start(t + d); o.stop(t + d + 0.96);
+        g.gain.linearRampToValueAtTime(0.065 - i * 0.006, t + d + 0.014);
+        g.gain.exponentialRampToValueAtTime(0.001, t + d + 1.4);
+        o.start(t + d); o.stop(t + d + 1.42);
       });
     } catch (_) {}
   }
