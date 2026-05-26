@@ -36,161 +36,148 @@
   canvas.width = canvas.height = SZ;
   const ctx = canvas.getContext('2d');
 
-  let cx = SZ / 2, cy = SZ / 2;
-  let cvx = 0, cvy = 0;
-  let mx = SZ / 2, my = SZ / 2, isInside = false;
+  // ── Physics constants ─────────────────────────────────────────
+  const G         = 780000; // px³/s² — gives ~5s orbits at r=80px
+  const N         = 90;
+  const TRAIL_LEN = 20;
+  const MIN_R     = 15;     // singularity clamp
+  const CLICK_STR = 12000;  // radial impulse strength
 
-  const RINGS = [
-    { r: 38,  n: 7,  spd:  0.022, alpha: 0.75 },
-    { r: 72,  n: 12, spd: -0.014, alpha: 0.52 },
-    { r: 112, n: 18, spd:  0.009, alpha: 0.34 },
-    { r: 155, n: 24, spd: -0.006, alpha: 0.20 },
-  ];
+  let mx = SZ/2, my = SZ/2, isInside = false;
 
+  // ── Particles ─────────────────────────────────────────────────
   const particles = [];
-  RINGS.forEach((ring, ri) => {
-    for (let i = 0; i < ring.n; i++) {
-      particles.push({ ri, angle: (i / ring.n) * Math.PI * 2, r: ring.r, vr: 0, va: 0 });
-    }
-  });
 
+  function spawn(gx, gy) {
+    const r    = 35 + Math.random() * 150;
+    const ang  = Math.random() * Math.PI * 2;
+    const x    = gx + Math.cos(ang) * r;
+    const y    = gy + Math.sin(ang) * r;
+    const orbV = Math.sqrt(G / r) * (0.80 + Math.random() * 0.40);
+    const cw   = Math.random() < 0.22 ? -1 : 1;
+    particles.push({
+      x, y,
+      vx: -Math.sin(ang) * orbV * cw + (Math.random()-0.5) * 12,
+      vy:  Math.cos(ang) * orbV * cw + (Math.random()-0.5) * 12,
+      trail: [],
+    });
+  }
+
+  for (let i = 0; i < N; i++) spawn(SZ/2, SZ/2);
+
+  // ── Events ───────────────────────────────────────────────────
   canvas.addEventListener('mousemove', e => {
     const r = canvas.getBoundingClientRect();
     mx = (e.clientX - r.left) * (SZ / r.width);
     my = (e.clientY - r.top)  * (SZ / r.height);
     isInside = true;
-    maybeTick(e.clientX, e.clientY);
   });
   canvas.addEventListener('mouseenter', () => isInside = true);
   canvas.addEventListener('mouseleave', () => isInside = false);
 
-  canvas.addEventListener('pointerdown', () => {
+  canvas.addEventListener('pointerdown', e => {
+    const r  = canvas.getBoundingClientRect();
+    const ex = (e.clientX - r.left) * (SZ / r.width);
+    const ey = (e.clientY - r.top)  * (SZ / r.height);
     particles.forEach(p => {
-      p.vr += 4 + Math.random() * 3;
-      p.va += (Math.random() - 0.5) * 0.04;
+      const dx = p.x - ex, dy = p.y - ey;
+      const d  = Math.sqrt(dx*dx + dy*dy) + 1;
+      const imp = CLICK_STR / d;
+      p.vx += (dx/d) * imp;
+      p.vy += (dy/d) * imp;
     });
     playClick();
   });
 
-  const CURSOR_PULL_R = 88;
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.touches[0], r = canvas.getBoundingClientRect();
+    mx = (t.clientX - r.left) * (SZ / r.width);
+    my = (t.clientY - r.top)  * (SZ / r.height);
+    isInside = true;
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.touches[0], r = canvas.getBoundingClientRect();
+    mx = (t.clientX - r.left) * (SZ / r.width);
+    my = (t.clientY - r.top)  * (SZ / r.height);
+  }, { passive: false });
+  canvas.addEventListener('touchend', () => isInside = false);
 
-  function update() {
-    const tx = isInside ? mx : SZ / 2;
-    const ty = isInside ? my : SZ / 2;
-    cvx += (tx - cx) * 0.055;
-    cvy += (ty - cy) * 0.055;
-    cvx *= 0.82; cvy *= 0.82;
-    cx += cvx; cy += cvy;
+  // ── Update ───────────────────────────────────────────────────
+  function update(dt) {
+    const gx = isInside ? mx : SZ/2;
+    const gy = isInside ? my : SZ/2;
 
-    particles.forEach(p => {
-      const ring = RINGS[p.ri];
-      p.angle += ring.spd + p.va;
-      p.va *= 0.92;
-      p.vr += (ring.r - p.r) * 0.12;
-      p.vr *= 0.78;
-      p.r += p.vr;
-      p.r = Math.max(p.r, 2);
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p  = particles[i];
+      const dx = gx - p.x, dy = gy - p.y;
+      const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_R);
+      const acc = G / (d * d);
 
-      // Cursor gravity — pulls particles toward cursor when close
-      if (isInside) {
-        const px = cx + Math.cos(p.angle) * p.r;
-        const py = cy + Math.sin(p.angle) * p.r;
-        const fdx = mx - px, fdy = my - py;
-        const dist = Math.sqrt(fdx * fdx + fdy * fdy);
-        if (dist < CURSOR_PULL_R) {
-          const str = (1 - dist / CURSOR_PULL_R) * 0.55;
-          // Decompose pull force into radial and angular components
-          p.vr += (fdx * Math.cos(p.angle) + fdy * Math.sin(p.angle)) * str;
-          p.va += (-fdx * Math.sin(p.angle) + fdy * Math.cos(p.angle)) * str * 0.012;
-        }
-      }
-    });
-  }
+      p.vx += (dx/d) * acc * dt;
+      p.vy += (dy/d) * acc * dt;
+      p.x  += p.vx * dt;
+      p.y  += p.vy * dt;
 
-  function draw() {
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, SZ, SZ);
+      p.trail.push({ x: p.x, y: p.y });
+      if (p.trail.length > TRAIL_LEN) p.trail.shift();
 
-    // Nucleus glow
-    const nucGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 32);
-    nucGrad.addColorStop(0,   'rgba(255,255,255,0.14)');
-    nucGrad.addColorStop(0.4, 'rgba(255,255,255,0.05)');
-    nucGrad.addColorStop(1,   'rgba(255,255,255,0)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, 32, 0, Math.PI * 2);
-    ctx.fillStyle = nucGrad;
-    ctx.fill();
-
-    RINGS.forEach(ring => {
-      ctx.beginPath();
-      ctx.arc(cx, cy, ring.r, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    });
-
-    particles.forEach(p => {
-      const ring = RINGS[p.ri];
-      const px = cx + Math.cos(p.angle) * p.r;
-      const py = cy + Math.sin(p.angle) * p.r;
-
-      // Comet trail — stored relative to nucleus so it moves with it
-      if (!p.trail) p.trail = [];
-      p.trail.push({ dx: px - cx, dy: py - cy });
-      if (p.trail.length > 8) p.trail.shift();
-      p.trail.forEach((pt, j) => {
-        const frac = j / p.trail.length;
-        ctx.beginPath();
-        ctx.arc(cx + pt.dx, cy + pt.dy, 0.5 + frac * 0.8, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${(frac * 0.28 * ring.alpha).toFixed(3)})`;
-        ctx.fill();
-      });
-
-      const disp = Math.abs(p.r - ring.r);
-      const alpha = ring.alpha + Math.min(disp / 20, 1) * 0.3;
-      const radius = 1.5 + Math.min(disp / 30, 1) * 1.0;
-      ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${Math.min(alpha, 0.95).toFixed(3)})`;
-      ctx.fill();
-    });
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fill();
-
-    if (isInside) {
-      // Gravity well influence ring
-      ctx.beginPath();
-      ctx.arc(mx, my, CURSOR_PULL_R, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      // Cursor dot
-      const dx = mx - cx, dy = my - cy;
-      if (Math.sqrt(dx * dx + dy * dy) > 8) {
-        ctx.beginPath();
-        ctx.arc(mx, my, 1.8, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fill();
+      if (p.x < -SZ || p.x > SZ*2 || p.y < -SZ || p.y > SZ*2) {
+        particles.splice(i, 1);
+        spawn(gx, gy);
       }
     }
   }
 
-  // ── Audio ─────────────────────────────────────────────────────
-  let hoverAudio = null, clickAudio = null;
+  // ── Draw ─────────────────────────────────────────────────────
+  function draw() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, SZ, SZ);
+
+    const gx = isInside ? mx : SZ/2;
+    const gy = isInside ? my : SZ/2;
+
+    // Gravity well glow
+    const grd = ctx.createRadialGradient(gx, gy, 0, gx, gy, 44);
+    grd.addColorStop(0,    'rgba(255,255,255,0.13)');
+    grd.addColorStop(0.45, 'rgba(255,255,255,0.04)');
+    grd.addColorStop(1,    'rgba(255,255,255,0)');
+    ctx.beginPath();
+    ctx.arc(gx, gy, 44, 0, Math.PI*2);
+    ctx.fillStyle = grd;
+    ctx.fill();
+
+    // Particles + trails
+    particles.forEach(p => {
+      const len = p.trail.length;
+      for (let j = 0; j < len; j++) {
+        const frac = j / len;
+        const pt   = p.trail[j];
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 0.5 + frac * 0.9, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(255,255,255,${(frac * frac * 0.40).toFixed(3)})`;
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.8, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.88)';
+      ctx.fill();
+    });
+
+    // Gravity source dot
+    ctx.beginPath();
+    ctx.arc(gx, gy, 2.5, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.fill();
+  }
+
+  // ── Audio ────────────────────────────────────────────────────
+  let clickAudio = null;
   function initAudio() {
-    if (hoverAudio) return;
-    hoverAudio = new Audio('./sounds/selection.mp3');
-    hoverAudio.volume = 0.06;
+    if (clickAudio) return;
     clickAudio = new Audio('./sounds/selection.mp3');
     clickAudio.volume = 0.42;
-  }
-  function playHover() {
-    initAudio();
-    hoverAudio.currentTime = 0;
-    hoverAudio.play().catch(() => {});
   }
   function playClick() {
     initAudio();
@@ -198,17 +185,16 @@
     clickAudio.play().catch(() => {});
   }
 
-  let lastTick = { x: 0, y: 0 }, lastTickMs = 0;
-  function maybeTick(x, y) {
-    const dx = x - lastTick.x, dy = y - lastTick.y;
-    if (dx * dx + dy * dy < 48 * 48) return;
-    const now = performance.now();
-    if (now - lastTickMs < 220) return;
-    lastTick = { x, y }; lastTickMs = now;
-    playHover();
+  // ── Loop ─────────────────────────────────────────────────────
+  let lastT = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
   }
-
-  (function loop() { update(); draw(); requestAnimationFrame(loop); })();
+  requestAnimationFrame(loop);
 </script>
 </body>
 </html>
