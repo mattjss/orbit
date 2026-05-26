@@ -72,6 +72,8 @@
     playClick();
   });
 
+  const CURSOR_PULL_R = 88;
+
   function update() {
     const tx = isInside ? mx : SZ / 2;
     const ty = isInside ? my : SZ / 2;
@@ -88,6 +90,20 @@
       p.vr *= 0.78;
       p.r += p.vr;
       p.r = Math.max(p.r, 2);
+
+      // Cursor gravity — pulls particles toward cursor when close
+      if (isInside) {
+        const px = cx + Math.cos(p.angle) * p.r;
+        const py = cy + Math.sin(p.angle) * p.r;
+        const fdx = mx - px, fdy = my - py;
+        const dist = Math.sqrt(fdx * fdx + fdy * fdy);
+        if (dist < CURSOR_PULL_R) {
+          const str = (1 - dist / CURSOR_PULL_R) * 0.55;
+          // Decompose pull force into radial and angular components
+          p.vr += (fdx * Math.cos(p.angle) + fdy * Math.sin(p.angle)) * str;
+          p.va += (-fdx * Math.sin(p.angle) + fdy * Math.cos(p.angle)) * str * 0.012;
+        }
+      }
     });
   }
 
@@ -118,15 +134,15 @@
       const px = cx + Math.cos(p.angle) * p.r;
       const py = cy + Math.sin(p.angle) * p.r;
 
-      // Comet trail
+      // Comet trail — stored relative to nucleus so it moves with it
       if (!p.trail) p.trail = [];
-      p.trail.push({ x: px, y: py });
+      p.trail.push({ dx: px - cx, dy: py - cy });
       if (p.trail.length > 8) p.trail.shift();
       p.trail.forEach((pt, j) => {
-        const t = j / p.trail.length;
+        const frac = j / p.trail.length;
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 0.5 + t * 0.8, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${(t * 0.28 * ring.alpha).toFixed(3)})`;
+        ctx.arc(cx + pt.dx, cy + pt.dy, 0.5 + frac * 0.8, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${(frac * 0.28 * ring.alpha).toFixed(3)})`;
         ctx.fill();
       });
 
@@ -145,11 +161,18 @@
     ctx.fill();
 
     if (isInside) {
+      // Gravity well influence ring
+      ctx.beginPath();
+      ctx.arc(mx, my, CURSOR_PULL_R, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // Cursor dot
       const dx = mx - cx, dy = my - cy;
       if (Math.sqrt(dx * dx + dy * dy) > 8) {
         ctx.beginPath();
-        ctx.arc(mx, my, 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        ctx.arc(mx, my, 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
         ctx.fill();
       }
     }
@@ -159,8 +182,8 @@
   let hoverAudio = null, clickAudio = null;
   function initAudio() {
     if (hoverAudio) return;
-    hoverAudio = new Audio('./sounds/hover.mp3');
-    hoverAudio.volume = 0.25;
+    hoverAudio = new Audio('./sounds/selection.mp3');
+    hoverAudio.volume = 0.06;
     clickAudio = new Audio('./sounds/selection.mp3');
     clickAudio.volume = 0.42;
   }
@@ -178,9 +201,9 @@
   let lastTick = { x: 0, y: 0 }, lastTickMs = 0;
   function maybeTick(x, y) {
     const dx = x - lastTick.x, dy = y - lastTick.y;
-    if (dx * dx + dy * dy < 28 * 28) return;
+    if (dx * dx + dy * dy < 48 * 48) return;
     const now = performance.now();
-    if (now - lastTickMs < 140) return;
+    if (now - lastTickMs < 220) return;
     lastTick = { x, y }; lastTickMs = now;
     playHover();
   }
