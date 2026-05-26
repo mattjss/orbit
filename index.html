@@ -133,62 +133,33 @@
   }
 
   // ── Audio ─────────────────────────────────────────────────────
-  let AC;
-  function ac() {
-    if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
-    if (AC.state === 'suspended') AC.resume();
-    return AC;
+  let hoverAudio = null, clickAudio = null;
+  function initAudio() {
+    if (hoverAudio) return;
+    hoverAudio = new Audio('./sounds/hover.mp3');
+    hoverAudio.volume = 0.25;
+    clickAudio = new Audio('./sounds/selection.mp3');
+    clickAudio.volume = 0.42;
+  }
+  function playHover() {
+    initAudio();
+    hoverAudio.currentTime = 0;
+    hoverAudio.play().catch(() => {});
+  }
+  function playClick() {
+    initAudio();
+    clickAudio.currentTime = 0;
+    clickAudio.play().catch(() => {});
   }
 
-  // D Dorian — minor with raised 6th, cosmic and directional
-  const ORBIT_NOTES = [147, 165, 196, 220, 247, 294, 330, 392, 440, 494, 523, 587];
-
-  let lastTick = { x: 0, y: 0 }, lastTickT = 0;
+  let lastTick = { x: 0, y: 0 }, lastTickMs = 0;
   function maybeTick(x, y) {
     const dx = x - lastTick.x, dy = y - lastTick.y;
-    if (dx * dx + dy * dy < 22 * 22) return;
-    lastTick = { x, y };
-    try {
-      const a = ac(), t = a.currentTime;
-      if (t - lastTickT < 0.06) return;
-      lastTickT = t;
-      // Square wave — closer to nucleus = higher pitch
-      const dist = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
-      const tFrac = Math.max(0, 1 - dist / 185);
-      const freq = ORBIT_NOTES[Math.min(Math.floor(tFrac * ORBIT_NOTES.length), ORBIT_NOTES.length - 1)];
-      const o = a.createOscillator(), g = a.createGain();
-      o.type = 'square'; o.frequency.value = freq;
-      o.connect(g); g.connect(a.destination);
-      g.gain.setValueAtTime(0.030, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.058);
-      o.start(t); o.stop(t + 0.062);
-    } catch (_) {}
-  }
-
-  function playClick() {
-    try {
-      const a = ac(), t = a.currentTime;
-
-      // Noise explosion
-      const buf = a.createBuffer(1, Math.floor(a.sampleRate * 0.15), a.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (data.length * 0.3));
-      const src = a.createBufferSource(); src.buffer = buf;
-      const flt = a.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 900;
-      const gn = a.createGain(); gn.gain.setValueAtTime(0.18, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-      src.connect(flt); flt.connect(gn); gn.connect(a.destination); src.start(t);
-
-      // Ascending orbital launch — D Dorian arpeggio
-      [147, 220, 294, 440, 587, 880].forEach((freq, i) => {
-        const d = 0.08 + i * 0.072;
-        const o = a.createOscillator(), g = a.createGain();
-        o.type = 'square'; o.frequency.value = freq;
-        o.connect(g); g.connect(a.destination);
-        g.gain.setValueAtTime(0.038, t + d);
-        g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.07);
-        o.start(t + d); o.stop(t + d + 0.075);
-      });
-    } catch (_) {}
+    if (dx * dx + dy * dy < 28 * 28) return;
+    const now = performance.now();
+    if (now - lastTickMs < 140) return;
+    lastTick = { x, y }; lastTickMs = now;
+    playHover();
   }
 
   (function loop() { update(); draw(); requestAnimationFrame(loop); })();
