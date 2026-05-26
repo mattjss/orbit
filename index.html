@@ -140,18 +140,7 @@
     return AC;
   }
 
-  let _revBuf = null;
-  function getRevBuf(a) {
-    if (_revBuf) return _revBuf;
-    const len = Math.floor(a.sampleRate * 1.8);
-    _revBuf = a.createBuffer(2, len, a.sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-      const d = _revBuf.getChannelData(ch);
-      for (let i = 0; i < len; i++)
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
-    }
-    return _revBuf;
-  }
+  const ORBIT_NOTES = [131, 165, 196, 220, 262, 330, 392, 523];
 
   let lastTick = { x: 0, y: 0 }, lastTickT = 0;
   function maybeTick(x, y) {
@@ -162,19 +151,17 @@
       const a = ac(), t = a.currentTime;
       if (t - lastTickT < 0.06) return;
       lastTickT = t;
-      // Two detuned sines — soft orbital hum, proximity raises pitch
-      const distFromCenter = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
-      const tFrac = Math.max(0, 1 - distFromCenter / 185);
-      const freq = 150 + tFrac * 250;
-      [freq, freq * 1.003].forEach(f => {
-        const o = a.createOscillator(), g = a.createGain();
-        o.type = 'sine'; o.frequency.value = f;
-        o.connect(g); g.connect(a.destination);
-        g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(0.015, t + 0.038);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
-        o.start(t); o.stop(t + 0.43);
-      });
+      // Triangle wave — closer to nucleus = higher pitch
+      const dist = Math.sqrt((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
+      const tFrac = Math.max(0, 1 - dist / 185);
+      const freq = ORBIT_NOTES[Math.min(Math.floor(tFrac * ORBIT_NOTES.length), ORBIT_NOTES.length - 1)];
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'triangle'; o.frequency.value = freq;
+      o.connect(g); g.connect(a.destination);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.034, t + 0.014);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+      o.start(t); o.stop(t + 0.14);
     } catch (_) {}
   }
 
@@ -182,51 +169,28 @@
     try {
       const a = ac(), t = a.currentTime;
 
-      const conv = a.createConvolver();
-      conv.buffer = getRevBuf(a);
-      const convG = a.createGain(); convG.gain.value = 0.28;
-      conv.connect(convG); convG.connect(a.destination);
-
-      // Impact punch — audible mid-bass drop
+      // Bass punch — felt on laptops
       const sub = a.createOscillator(), subG = a.createGain();
       sub.type = 'sine';
       sub.frequency.setValueAtTime(110, t);
-      sub.frequency.exponentialRampToValueAtTime(32, t + 0.46);
+      sub.frequency.exponentialRampToValueAtTime(35, t + 0.38);
       sub.connect(subG); subG.connect(a.destination);
       subG.gain.setValueAtTime(0.001, t);
-      subG.gain.linearRampToValueAtTime(0.30, t + 0.007);
-      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.48);
-      sub.start(t); sub.stop(t + 0.49);
+      subG.gain.linearRampToValueAtTime(0.28, t + 0.007);
+      subG.gain.exponentialRampToValueAtTime(0.001, t + 0.40);
+      sub.start(t); sub.stop(t + 0.41);
 
-      // Harmonic sines — clean, through reverb
-      [110, 165, 220].forEach((freq, i) => {
-        const d = i * 0.03;
+      // Orbital ejection — descending triangle arpeggio
+      [784, 523, 392, 262, 196].forEach((freq, i) => {
+        const d = i * 0.068;
         const o = a.createOscillator(), g = a.createGain();
-        o.type = 'sine'; o.frequency.value = freq;
-        o.connect(g);
-        g.connect(conv);
-        g.connect(a.destination);
-        const pk = 0.044 - i * 0.011;
+        o.type = 'triangle'; o.frequency.value = freq;
+        o.connect(g); g.connect(a.destination);
         g.gain.setValueAtTime(0.001, t + d);
-        g.gain.linearRampToValueAtTime(pk, t + d + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.82);
-        o.start(t + d); o.stop(t + d + 0.83);
+        g.gain.linearRampToValueAtTime(0.048 - i * 0.007, t + d + 0.018);
+        g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.85);
+        o.start(t + d); o.stop(t + d + 0.86);
       });
-
-      // Scatter — bandpass noise sweep
-      const nLen = Math.floor(a.sampleRate * 0.12);
-      const nBuf = a.createBuffer(1, nLen, a.sampleRate);
-      const nd = nBuf.getChannelData(0);
-      for (let i = 0; i < nLen; i++)
-        nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / (nLen * 0.2));
-      const nSrc = a.createBufferSource(); nSrc.buffer = nBuf;
-      const bpf = a.createBiquadFilter(); bpf.type = 'bandpass';
-      bpf.frequency.setValueAtTime(500, t);
-      bpf.frequency.exponentialRampToValueAtTime(3200, t + 0.1);
-      bpf.Q.value = 1.5;
-      const nG = a.createGain(); nG.gain.value = 0.17;
-      nSrc.connect(bpf); bpf.connect(nG); nG.connect(a.destination);
-      nSrc.start(t);
     } catch (_) {}
   }
 
